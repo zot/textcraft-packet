@@ -32,25 +32,28 @@ import (
 	msgpack "github.com/vmihailenco/msgpack/v5"
 )
 
+//Marshal use msgpack to marshal a struct which can have private fields
 func Marshal(aStruct interface{}) ([]byte, error) {
-	tmpMap, err := structToMap(aStruct)
-	if err != nil {
-		return nil, err
-	}
+	tmpMap, err := StructToMap(aStruct)
+	if err != nil {return nil, err}
 	return msgpack.Marshal(tmpMap)
 }
 
-func structToMap(aStruct interface{}) (map[string]interface{}, error) {
+//Encode use msgpack to marshal a struct which can have private fields
+func Encode(encoder *msgpack.Encoder, aStruct interface{}) error {
+	tmpMap, err := StructToMap(aStruct)
+	if err != nil {return err}
+	return encoder.Encode(tmpMap)
+}
+
+//StructToMap convert a simple structure to a map (not recursive)
+func StructToMap(aStruct interface{}) (map[string]interface{}, error) {
 	tmpMap := make(map[string]interface{})
 	val := reflect.ValueOf(aStruct)
-	if reflect.Indirect(val) == val {
-		return nil, fmt.Errorf("attempt to call marshall without a pointer")
-	}
+	if reflect.Indirect(val) == val {return nil, fmt.Errorf("attempt to call marshall without a pointer")}
 	for {
 		next := reflect.Indirect(val)
-		if val == next {
-			break
-		}
+		if val == next {break}
 		val = next
 	}
 	t := val.Type()
@@ -58,63 +61,100 @@ func structToMap(aStruct interface{}) (map[string]interface{}, error) {
 		ft := t.Field(i)
 		f := val.Field(i)
 		f, err := privateStructValue(t, ft, f)
-		if err != nil {
-			return nil, err
-		}
+		if err != nil {return nil, err}
 		tmpMap[ft.Name] = f.Interface()
 	}
 	return tmpMap, nil
 }
 
-func Unmarshal(bytes []byte, aStruct interface{}) error {
+//Unmarshal unmarshal msgpack bytes into a struct allowing private fields
+func Unmarshal(bytes []byte, aStruct interface{}) (interface{}, error) {
 	var tmpMap map[string]interface{}
 
 	err := msgpack.Unmarshal(bytes, &tmpMap)
-	if err != nil {
-		return err
-	}
-	return mapToStruct(tmpMap, aStruct)
+	if err != nil {return nil, err}
+	err = MapToStruct(tmpMap, aStruct)
+	return aStruct, err
 }
 
-func mapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
-	inputValue := reflect.Indirect(reflect.ValueOf(aStruct))
-	if reflect.Indirect(inputValue) == inputValue {
-		return fmt.Errorf("Attempt to call unmarshall without a pointer")
-	}
-	t := reflect.Indirect(inputValue).Type()
+//Decode decode a stream item into a struct allowing private fields
+func Decode(decoder *msgpack.Decoder, aStruct interface{}) (interface{}, error) {
+	var tmpMap map[string]interface{}
+
+	err := decoder.Decode(&tmpMap)
+	if err != nil {return nil, err}
+	err = MapToStruct(tmpMap, aStruct)
+	return aStruct, err
+}
+
+//MapToStruct convert a map to a simple struct (not recursive)
+func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
+	inputValue := reflect.ValueOf(aStruct)
+	if inputValue.Kind() != reflect.Ptr {return fmt.Errorf("Attempt to call Unmarshal without a pointer to a struct")}
+	referent := reflect.Indirect(inputValue)
+	if referent.Kind() != reflect.Struct {return fmt.Errorf("Attempt to call Unmarshal without a pointer to a struct")}
+	t := referent.Type()
 	fmt.Printf("TYPE: %v\n", t)
-	result := reflect.New(t)
-	newDataValue := reflect.Indirect(result)
+	if referent.Interface() == nil {
+		referent := reflect.New(t)
+		inputValue.Set(referent)
+	}
 	for k, v := range aMap {
 		if sf, present := t.FieldByName(k); present {
-			f, err := privateStructValue(t, sf, newDataValue.FieldByName(k))
-			if err != nil {
-				return err
-			}
+			f, err := privateStructValue(t, sf, referent.FieldByName(k))
+			if err != nil {return err}
 			vValue := reflect.ValueOf(v)
-			if !vValue.Type().AssignableTo(sf.Type) {
-				if !isNum(sf.Type) || !isNum(vValue.Type()) {
-					return fmt.Errorf("bad value for %s.%s: %v", t.Name(), sf.Name, v)
-				}
-				vValue = vValue.Convert(sf.Type)
-			}
+			vValue, err = convert(vValue, sf.Type)
+			if err != nil {return err}
+			fmt.Printf("Assigning %v to a %v\n", vValue, sf.Type)
 			f.Set(vValue)
 		} else {
 			fmt.Printf("No field %s.%s\n", t.Name(), k)
 		}
 	}
-	inputValue.Set(result)
 	return nil
+}
+
+func convert(val reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
+	if val.Type().Kind() == reflect.Interface {
+		val = val.Elem()
+	}
+	t := val.Type()
+	if t == cvtType {return val, nil}
+	if t.Kind() == reflect.Map && t.Kind() == cvtType.Kind() {return convertMap(val, cvtType)}
+	if t.Kind() == reflect.Slice && t.Kind() == cvtType.Kind() {return convertSlice(val, cvtType)}
+	if isNum(t) && isNum(cvtType) {return val.Convert(cvtType), nil}
+	return val, fmt.Errorf("Cannot convert %v to %v", val.Type(), cvtType)
+}
+
+func convertMap(aMap reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
+	etype := cvtType.Elem()
+	output := reflect.MakeMap(cvtType)
+	for _, k := range aMap.MapKeys() {
+		//fmt.Println("Setting value", aMap.MapIndex(k))
+		v, err := convert(aMap.MapIndex(k), etype)
+		if err != nil {return aMap, err}
+		output.SetMapIndex(k, v)
+	}
+	fmt.Printf("Converted map to %v", output)
+	return output, nil
+}
+
+func convertSlice(array reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
+	output := reflect.MakeSlice(cvtType, array.Len(), array.Cap())
+	etype := cvtType.Elem()
+	for i := 0; i < array.Len(); i++ {
+		e, err := convert(array.Index(i), etype)
+		if err != nil {return array, err}
+		output.Index(i).Set(e)
+	}
+	return output, nil
 }
 
 // thanks to cpcallen at Stackoverflow: https://stackoverflow.com/a/43918797/1026782
 func privateStructValue(t reflect.Type, sf reflect.StructField, field reflect.Value) (reflect.Value, error) {
-	if field.CanSet() {
-		return field, nil
-	}
-	if sf.PkgPath == "" {
-		return field, fmt.Errorf("cannot set %s.%s", t.Name(), sf.Name)
-	}
+	if field.CanSet() {return field, nil}
+	if sf.PkgPath == "" {return field, fmt.Errorf("cannot set %s.%s", t.Name(), sf.Name)}
 	return reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem(), nil
 }
 
