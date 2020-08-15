@@ -94,7 +94,6 @@ func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 	referent := reflect.Indirect(inputValue)
 	if referent.Kind() != reflect.Struct {return fmt.Errorf("Attempt to call Unmarshal without a pointer to a struct")}
 	t := referent.Type()
-	fmt.Printf("TYPE: %v\n", t)
 	if referent.Interface() == nil {
 		referent := reflect.New(t)
 		inputValue.Set(referent)
@@ -106,10 +105,7 @@ func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 			vValue := reflect.ValueOf(v)
 			vValue, err = convert(vValue, sf.Type)
 			if err != nil {return err}
-			fmt.Printf("Assigning %v to a %v\n", vValue, sf.Type)
 			f.Set(vValue)
-		} else {
-			fmt.Printf("No field %s.%s\n", t.Name(), k)
 		}
 	}
 	return nil
@@ -131,12 +127,10 @@ func convertMap(aMap reflect.Value, cvtType reflect.Type) (reflect.Value, error)
 	etype := cvtType.Elem()
 	output := reflect.MakeMap(cvtType)
 	for _, k := range aMap.MapKeys() {
-		//fmt.Println("Setting value", aMap.MapIndex(k))
 		v, err := convert(aMap.MapIndex(k), etype)
 		if err != nil {return aMap, err}
 		output.SetMapIndex(k, v)
 	}
-	fmt.Printf("Converted map to %v", output)
 	return output, nil
 }
 
