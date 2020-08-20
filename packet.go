@@ -90,9 +90,9 @@ func Decode(decoder *msgpack.Decoder, aStruct interface{}) (interface{}, error) 
 //MapToStruct convert a map to a simple struct (not recursive)
 func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 	inputValue := reflect.ValueOf(aStruct)
-	if inputValue.Kind() != reflect.Ptr {return fmt.Errorf("Attempt to call Unmarshal without a pointer to a struct")}
+	if inputValue.Kind() != reflect.Ptr {return fmt.Errorf("attempt to call Unmarshal without a pointer to a struct")}
 	referent := reflect.Indirect(inputValue)
-	if referent.Kind() != reflect.Struct {return fmt.Errorf("Attempt to call Unmarshal without a pointer to a struct")}
+	if referent.Kind() != reflect.Struct {return fmt.Errorf("attempt to call Unmarshal without a pointer to a struct")}
 	t := referent.Type()
 	if referent.Interface() == nil {
 		referent := reflect.New(t)
@@ -120,7 +120,7 @@ func convert(val reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
 	if t.Kind() == reflect.Map && t.Kind() == cvtType.Kind() {return convertMap(val, cvtType)}
 	if t.Kind() == reflect.Slice && t.Kind() == cvtType.Kind() {return convertSlice(val, cvtType)}
 	if isNum(t) && isNum(cvtType) {return val.Convert(cvtType), nil}
-	return val, fmt.Errorf("Cannot convert %v to %v", val.Type(), cvtType)
+	return val, fmt.Errorf("cannot convert %v to %v", val.Type(), cvtType)
 }
 
 func convertMap(aMap reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
