@@ -90,9 +90,10 @@ func Decode(decoder *msgpack.Decoder, aStruct interface{}) (interface{}, error) 
 //MapToStruct convert a map to a simple struct (not recursive)
 func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 	inputValue := reflect.ValueOf(aStruct)
-	if inputValue.Kind() != reflect.Ptr {return fmt.Errorf("attempt to call Unmarshal without a pointer to a struct")}
+	//fmt.Printf("Decode kind %#v, %#v\n", inputValue.Kind(), aStruct)
 	referent := reflect.Indirect(inputValue)
-	if referent.Kind() != reflect.Struct {return fmt.Errorf("attempt to call Unmarshal without a pointer to a struct")}
+	if inputValue == referent {return fmt.Errorf("attempt to call Unmarshal without a pointer to a struct: %#v is not a pointer to a struct, it is a %#v", aStruct, referent.Kind())}
+	fmt.Printf("Final kind %#v is %#v\n", aStruct, referent.Kind())
 	t := referent.Type()
 	if referent.Interface() == nil {
 		referent := reflect.New(t)
@@ -103,7 +104,7 @@ func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 			f, err := privateStructValue(t, sf, referent.FieldByName(k))
 			if err != nil {return err}
 			vValue := reflect.ValueOf(v)
-			vValue, err = convert(vValue, sf.Type)
+			vValue, err = convert(vValue, sf.Type, f)
 			if err != nil {return err}
 			f.Set(vValue)
 		}
@@ -111,13 +112,18 @@ func MapToStruct(aMap map[string]interface{}, aStruct interface{}) error {
 	return nil
 }
 
-func convert(val reflect.Value, cvtType reflect.Type) (reflect.Value, error) {
+func convert(val reflect.Value, cvtType reflect.Type, cvtValue reflect.Value) (reflect.Value, error) {
 	if val.Type().Kind() == reflect.Interface {
 		val = val.Elem()
 	}
 	t := val.Type()
 	if t == cvtType {return val, nil}
 	if t.Kind() == reflect.Map && t.Kind() == cvtType.Kind() {return convertMap(val, cvtType)}
+	if t.Kind() == reflect.Map && cvtType.Kind() == reflect.Struct {
+		err := MapToStruct(val.Interface().(map[string]interface{}), cvtValue.Addr())
+		if err != nil {return cvtValue, err}
+		return cvtValue, nil
+	}
 	if t.Kind() == reflect.Slice && t.Kind() == cvtType.Kind() {return convertSlice(val, cvtType)}
 	if isNum(t) && isNum(cvtType) {return val.Convert(cvtType), nil}
 	return val, fmt.Errorf("cannot convert %v to %v", val.Type(), cvtType)
@@ -127,7 +133,7 @@ func convertMap(aMap reflect.Value, cvtType reflect.Type) (reflect.Value, error)
 	etype := cvtType.Elem()
 	output := reflect.MakeMap(cvtType)
 	for _, k := range aMap.MapKeys() {
-		v, err := convert(aMap.MapIndex(k), etype)
+		v, err := convert(aMap.MapIndex(k), etype, aMap.MapIndex(k))
 		if err != nil {return aMap, err}
 		output.SetMapIndex(k, v)
 	}
@@ -138,7 +144,7 @@ func convertSlice(array reflect.Value, cvtType reflect.Type) (reflect.Value, err
 	output := reflect.MakeSlice(cvtType, array.Len(), array.Cap())
 	etype := cvtType.Elem()
 	for i := 0; i < array.Len(); i++ {
-		e, err := convert(array.Index(i), etype)
+		e, err := convert(array.Index(i), etype, array.Index(i))
 		if err != nil {return array, err}
 		output.Index(i).Set(e)
 	}
